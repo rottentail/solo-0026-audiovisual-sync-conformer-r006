@@ -316,25 +316,10 @@ func (s *Service) ReadConformBundle(id string) ([]byte, domain.ConformReceipt, e
 	if err := domain.ValidateIdentifier("conform_id", id); err != nil {
 		return nil, domain.ConformReceipt{}, err
 	}
-	record, err := s.repository.GetConform(id)
-	if err != nil {
-		return nil, domain.ConformReceipt{}, err
-	}
-	if domain.CanRecoverConform(record.State) &&
-		record.State == domain.ConformStateCompleted &&
-		!s.repository.ConformPublicationKnown(record) {
-		record.State = domain.ConformStateCommitting
-		record.UpdatedAt = time.Now().UTC()
-		if err := s.repository.UpdateConform(record); err != nil {
-			return nil, domain.ConformReceipt{}, err
-		}
-		return nil, domain.ConformReceipt{}, domain.NewError(
-			"conform_recovery_pending",
-			409,
-			"conform %s publication is being restored",
-			id,
-		)
-	}
+	// Reads are side-effect free: a completed job is terminal and its
+	// committed bundle is verified against the durable record on every
+	// read. A missing or corrupted artifact surfaces as an integrity
+	// failure, never as a regressed or re-rendered job.
 	return s.repository.ReadConformBundle(id)
 }
 

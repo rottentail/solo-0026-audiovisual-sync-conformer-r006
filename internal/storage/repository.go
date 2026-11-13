@@ -12,9 +12,8 @@ import (
 )
 
 type Repository struct {
-	root         string
-	locks        *keyLocks
-	publications *publicationIndex
+	root  string
+	locks *keyLocks
 }
 
 func New(root string) (*Repository, error) {
@@ -28,9 +27,8 @@ func New(root string) (*Repository, error) {
 		}
 	}
 	return &Repository{
-		root:         absolute,
-		locks:        newKeyLocks(),
-		publications: newPublicationIndex(),
+		root:  absolute,
+		locks: newKeyLocks(),
 	}, nil
 }
 
@@ -330,14 +328,14 @@ func (r *Repository) CommitConform(
 		os.RemoveAll(finalDir)
 		return domain.ConformJob{}, err
 	}
-	r.publications.remember(record.ID, bundle, receipt)
 	return record, nil
 }
 
-func (r *Repository) ConformPublicationKnown(record domain.ConformJob) bool {
-	return r.publications.matchesRecord(record)
-}
-
+// ReadConformBundle serves the committed bundle of a completed job. The
+// on-disk bundle directory, published by one atomic rename, is the durable
+// evidence of the delivery; every read re-verifies the artifacts against
+// the completed record so a restarted process serves exactly what was
+// committed and never rewrites the record.
 func (r *Repository) ReadConformBundle(id string) ([]byte, domain.ConformReceipt, error) {
 	record, err := r.GetConform(id)
 	if err != nil {
@@ -351,19 +349,17 @@ func (r *Repository) ReadConformBundle(id string) ([]byte, domain.ConformReceipt
 			id,
 		)
 	}
-	if !r.publications.matchesRecord(record) {
-		return nil, domain.ConformReceipt{}, domain.NewError(
-			"conform_publication_unavailable",
-			409,
-			"conform %s publication has not been restored",
-			id,
-		)
-	}
 	bundle, err := os.ReadFile(filepath.Join(r.bundleDir(id), "bundle.zip"))
 	if err != nil {
-		return nil, domain.ConformReceipt{}, fmt.Errorf("read conform bundle: %w", err)
+		return nil, domain.ConformReceipt{}, domain.NewError(
+			"bundle_integrity_failed",
+			500,
+			"completed conform %s bundle is unreadable: %s",
+			id,
+			err,
+		)
 	}
-	if len(bundle) != record.BundleBytes || shaOrEmpty(bundle) != record.BundleDigest {
+	if !bundleMatchesRecord(record, bundle) {
 		return nil, domain.ConformReceipt{}, domain.NewError(
 			"bundle_integrity_failed",
 			500,
@@ -372,17 +368,19 @@ func (r *Repository) ReadConformBundle(id string) ([]byte, domain.ConformReceipt
 	}
 	var receipt domain.ConformReceipt
 	if err := readJSON(filepath.Join(r.bundleDir(id), "receipt.json"), &receipt); err != nil {
-		return nil, domain.ConformReceipt{}, fmt.Errorf("read conform receipt: %w", err)
-	}
-	receiptData, err := os.ReadFile(filepath.Join(r.bundleDir(id), "receipt.json"))
-	if err != nil {
-		return nil, domain.ConformReceipt{}, fmt.Errorf("read conform receipt bytes: %w", err)
-	}
-	if !r.publications.matchesFiles(record, bundle, receiptData) {
 		return nil, domain.ConformReceipt{}, domain.NewError(
 			"bundle_integrity_failed",
 			500,
-			"stored bundle publication evidence does not match its files",
+			"completed conform %s receipt is unreadable: %s",
+			id,
+			err,
+		)
+	}
+	if !receiptMatchesRecord(record, receipt) {
+		return nil, domain.ConformReceipt{}, domain.NewError(
+			"bundle_integrity_failed",
+			500,
+			"stored receipt does not describe its completed record",
 		)
 	}
 	return bundle, receipt, nil

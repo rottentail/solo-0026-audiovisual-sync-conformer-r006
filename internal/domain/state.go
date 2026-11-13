@@ -43,19 +43,21 @@ func CanAdvanceConform(current, next string) bool {
 		return next == ConformStateCommitting || next == ConformStateFailed
 	case ConformStateCommitting:
 		return next == ConformStateCompleted || next == ConformStateFailed
-	case ConformStateCompleted:
-		return next == ConformStateCommitting
 	default:
+		// completed and failed are terminal: a delivered bundle is never
+		// rewritten and a failed job keeps its stable error.
 		return false
 	}
 }
 
+// CanRecoverConform reports whether a conform interrupted in the given state
+// may still be driven through its lifecycle. Terminal states are never
+// recovered: completed jobs stay delivered and failed jobs stay failed.
 func CanRecoverConform(state string) bool {
 	switch state {
 	case ConformStateQueued,
 		ConformStateRendering,
-		ConformStateCommitting,
-		ConformStateCompleted:
+		ConformStateCommitting:
 		return true
 	default:
 		return false
